@@ -1,0 +1,93 @@
+# Klaster MariaDB Galera: 3 węzły (vps3 zakłada klaster, vps1 i vps2 dołączają przez SST).
+# Uwaga: przy zmianie konfiguracji Ansible NIE restartuje MariaDB sam – restart węzła
+# w klastrze to świadoma operacja (patrz ćwiczenia).
+
+- name: Instalacja MariaDB, Galery i narzędzi do SST
+  ansible.builtin.apt:
+    name:
+      - mariadb-server
+      - mariadb-client
+      - mariadb-backup
+      - galera-4
+      - socat
+      - rsync
+    state: present
+
+- name: Konfiguracja Galery
+  ansible.builtin.template:
+    src: 60-galera.cnf.j2
+    dest: /etc/mysql/mariadb.conf.d/60-galera.cnf
+    owner: root
+    group: mysql
+    mode: "0640"
+
+- name: Czy ten węzeł jest już w klastrze
+  ansible.builtin.stat:
+    path: /var/lib/mysql/.lab-galera-ready
+  register: galera_ready
+
+- name: Pierwsze uruchomienie węzła Galery
+  when: not galera_ready.stat.exists
+  block:
+    - name: Zatrzymanie MariaDB uruchomionej przez instalator (tryb bez klastra)
+      ansible.builtin.systemd_service:
+        name: mariadb
+        state: stopped
+
+    - name: Założenie nowego klastra (tylko węzeł startowy)
+      ansible.builtin.command: galera_new_cluster
+      when: inventory_hostname == galera_bootstrap_node
+      changed_when: true
+
+    - name: Użytkownik do SST (kopiowanie danych do dołączających węzłów)
+      ansible.builtin.command:
+        argv:
+          - mariadb
+          - -e
+          - >-
+            CREATE USER IF NOT EXISTS 'sst'@'localhost' IDENTIFIED BY '{{ db_sst_password }}';
+            GRANT RELOAD, PROCESS, LOCK TABLES, BINLOG MONITOR, REPLICA MONITOR ON *.* TO 'sst'@'localhost';
+      when: inventory_hostname == galera_bootstrap_node
+      changed_when: true
+      no_log: true
+
+    - name: Dołączenie do klastra (pełna kopia danych przez SST, może potrwać)
+      ansible.builtin.systemd_service:
+        name: mariadb
+        state: started
+      when: inventory_hostname != galera_bootstrap_node
+
+    - name: Znacznik – węzeł jest w klastrze
+      ansible.builtin.file:
+        path: /var/lib/mysql/.lab-galera-ready
+        state: touch
+        owner: mysql
+        group: mysql
+        mode: "0644"
+
+- name: MariaDB włączona przy starcie systemu
+  ansible.builtin.systemd_service:
+    name: mariadb
+    enabled: true
+
+- name: Baza i użytkownik WordPressa (replikują się na cały klaster)
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - -e
+      - >-
+        CREATE DATABASE IF NOT EXISTS {{ wp_db_name }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+        CREATE USER IF NOT EXISTS '{{ wp_db_user }}'@'%' IDENTIFIED BY '{{ db_wp_password }}';
+        GRANT ALL PRIVILEGES ON {{ wp_db_name }}.* TO '{{ wp_db_user }}'@'%';
+  when: inventory_hostname == galera_bootstrap_node
+  changed_when: false
+  no_log: true
+
+- name: Stan klastra po konfiguracji
+  ansible.builtin.command: mariadb -N -e "SHOW STATUS LIKE 'wsrep_cluster_size'"
+  register: galera_size
+  changed_when: false
+
+- name: Rozmiar klastra Galera
+  ansible.builtin.debug:
+    msg: "{{ galera_size.stdout }}"

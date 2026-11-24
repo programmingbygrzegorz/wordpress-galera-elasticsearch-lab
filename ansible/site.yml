@@ -1,0 +1,36 @@
+# Każda maszyna wykonuje tylko „swoje” plays (Vagrant uruchamia playbook z --limit <nazwa>).
+# Kolejność tworzenia maszyn: vps3 -> vps1 -> vps2 -> lb.
+
+- name: Wszystkie maszyny – system bazowy i agent Zabbix
+  hosts: all
+  become: true
+  roles:
+    - common
+    - zabbix_agent
+
+- name: VPS3 – węzeł danych (S3, Galera, Elasticsearch, Git, Zabbix)
+  hosts: data
+  become: true
+  roles:
+    - seaweedfs
+    - galera
+    - elasticsearch
+    - deploy_user
+    - gitrepo
+    - zabbix_server
+
+- name: VPS1 i VPS2 – front WWW i węzły klastrów
+  hosts: web
+  become: true
+  roles:
+    - galera
+    - elasticsearch
+    - s3fs
+    - deploy_user
+    - web
+
+- name: LB – HAProxy
+  hosts: loadbalancer
+  become: true
+  roles:
+    - haproxy

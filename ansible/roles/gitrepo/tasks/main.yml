@@ -1,0 +1,68 @@
+# Repozytorium Git z kodem strony na VPS3. Push na gałąź main = wdrożenie na VPS1 i VPS2
+# (hook post-receive -> wp-deploy: po kolei na każdym węźle, z testem i automatycznym cofnięciem).
+
+- name: Katalog repozytoriów
+  ansible.builtin.file:
+    path: /srv/git
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: Puste repozytorium (bare)  # noqa: command-instead-of-module
+  ansible.builtin.command:
+    cmd: git init --bare --shared=group --initial-branch=main {{ git_repo_path }}
+    creates: "{{ git_repo_path }}/HEAD"
+  become: true
+  become_user: deploy
+
+- name: Pozwolenie na "git archive --remote" dla dowolnego commita (potrzebne przy cofaniu wdrożeń)
+  community.general.git_config:
+    scope: file
+    file: "{{ git_repo_path }}/config"
+    name: uploadarchive.allowUnreachable
+    value: "true"
+
+- name: Czy repozytorium ma już kod  # noqa: command-instead-of-module
+  ansible.builtin.command: git --git-dir={{ git_repo_path }} rev-parse --verify --quiet refs/heads/main
+  register: gitrepo_has_main
+  changed_when: false
+  failed_when: false
+
+- name: Pierwszy commit z szablonu strony (site-template/)
+  when: gitrepo_has_main.rc != 0
+  ansible.builtin.shell: |
+    set -e
+    tmp=$(mktemp -d)
+    cp -a /vagrant/site-template/. "$tmp/"
+    cd "$tmp"
+    git init -q --initial-branch=main
+    git add -A
+    git -c user.name="Lab Ansible" -c user.email="lab@{{ wp_domain }}" commit -q -m "Start: szablon strony WordPress"
+    git push -q {{ git_repo_path }} main
+    rm -rf "$tmp"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: deploy
+  changed_when: true
+
+- name: Skrypt wdrożenia wp-deploy
+  ansible.builtin.copy:
+    src: wp-deploy.sh
+    dest: /usr/local/bin/wp-deploy
+    mode: "0755"
+
+- name: Hook post-receive (instalowany po pierwszym commicie, żeby nie wdrażał przed powstaniem VPS1/VPS2)
+  ansible.builtin.copy:
+    src: post-receive.sh
+    dest: "{{ git_repo_path }}/hooks/post-receive"
+    owner: deploy
+    group: deploy
+    mode: "0755"
+
+- name: Dostęp do repozytorium dla użytkownika vagrant (praca wprost na VPS3)
+  ansible.builtin.user:
+    name: vagrant
+    groups: deploy
+    append: true

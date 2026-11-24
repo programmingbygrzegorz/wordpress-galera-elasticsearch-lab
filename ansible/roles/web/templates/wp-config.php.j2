@@ -1,0 +1,42 @@
+<?php
+// {{ ansible_managed }}
+// Wspólna konfiguracja – skrypt wp-release kopiuje ją do każdego wydania.
+
+// Baza: lokalny węzeł Galery (każdy VPS pisze do siebie, Galera replikuje synchronicznie)
+define( 'DB_NAME', '{{ wp_db_name }}' );
+define( 'DB_USER', '{{ wp_db_user }}' );
+define( 'DB_PASSWORD', '{{ db_wp_password }}' );
+define( 'DB_HOST', '127.0.0.1' );
+define( 'DB_CHARSET', 'utf8mb4' );
+define( 'DB_COLLATE', '' );
+
+// Klucze muszą być IDENTYCZNE na wszystkich węzłach – inaczej po przejściu na inny węzeł
+// za load balancerem użytkownik zostanie wylogowany
+{% for key in ['AUTH_KEY', 'SECURE_AUTH_KEY', 'LOGGED_IN_KEY', 'NONCE_KEY', 'AUTH_SALT', 'SECURE_AUTH_SALT', 'LOGGED_IN_SALT', 'NONCE_SALT'] %}
+define( '{{ key }}', '{{ lookup('ansible.builtin.password', lab_secrets_dir + '/wp_salt_' + key | lower + ' chars=ascii_letters,digits length=64') }}' );
+{% endfor %}
+
+$table_prefix = 'wp_';
+
+// HTTPS kończy się na load balancerze – do węzła przychodzi HTTP z nagłówkiem X-Forwarded-Proto
+if ( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https' ) {
+	$_SERVER['HTTPS'] = 'on';
+}
+define( 'WP_HOME', 'https://{{ wp_domain }}' );
+define( 'WP_SITEURL', 'https://{{ wp_domain }}' );
+
+// Kod zmienia się TYLKO przez Git – bez instalowania wtyczek i aktualizacji z panelu
+define( 'DISALLOW_FILE_MODS', true );
+define( 'AUTOMATIC_UPDATER_DISABLED', true );
+define( 'WP_ENVIRONMENT_TYPE', 'staging' );
+
+// ElasticPress: lokalny węzeł klastra Elasticsearch
+define( 'EP_HOST', 'http://127.0.0.1:9200' );
+
+define( 'WP_DEBUG', false );
+define( 'WP_DEBUG_LOG', '/var/log/wordpress/debug.log' );
+
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+require_once ABSPATH . 'wp-settings.php';

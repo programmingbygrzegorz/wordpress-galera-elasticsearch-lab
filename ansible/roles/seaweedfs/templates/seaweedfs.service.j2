@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+[Unit]
+Description=SeaweedFS – magazyn S3 labu (master, volume, filer, s3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=seaweedfs
+Group=seaweedfs
+WorkingDirectory=/var/lib/seaweedfs
+ExecStart=/usr/local/bin/weed server \
+  -ip={{ node_ip }} \
+  -ip.bind=0.0.0.0 \
+  -dir=/var/lib/seaweedfs \
+  -master.volumeSizeLimitMB=1024 \
+  -volume.max=20 \
+  -filer \
+  -s3 -s3.port={{ s3_port }} -s3.config=/etc/seaweedfs/s3.json
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

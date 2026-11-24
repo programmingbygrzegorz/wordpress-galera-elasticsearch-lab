@@ -1,0 +1,60 @@
+# Wspólne ustawienia labu. Wersje są w jednym miejscu – zmień i zrób `vagrant provision`.
+
+# --- Sieć -------------------------------------------------------------------
+# Podsieć przekazuje Vagrantfile (zmienna środowiskowa LAB_NET), tu tylko wartość domyślna
+lab_net: "192.168.57"
+lab_hosts:
+  lb: 5
+  vps1: 10
+  vps2: 11
+  vps3: 12
+node_ip: "{{ lab_net }}.{{ lab_hosts[inventory_hostname] }}"
+lb_ip: "{{ lab_net }}.{{ lab_hosts['lb'] }}"
+data_ip: "{{ lab_net }}.{{ lab_hosts['vps3'] }}"
+web_nodes: [vps1, vps2]
+cluster_nodes: [vps1, vps2, vps3]
+
+# Domena strony – na Windowsie dopisz do C:\Windows\System32\drivers\etc\hosts: "192.168.57.5 wordpress.lab"
+wp_domain: wordpress.lab
+lab_timezone: Europe/Warsaw
+
+# --- Hasła ------------------------------------------------------------------
+# Generowane przy pierwszym uruchomieniu do folderu .lab/ (poza gitem, widoczny też na Windowsie).
+# Wszystkie maszyny widzą ten sam folder (/vagrant), więc dostają te same hasła.
+lab_secrets_dir: /vagrant/.lab
+lab_pw_opts: "chars=ascii_letters,digits length=24"
+db_wp_password: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/db_wp_password ' + lab_pw_opts) }}"
+db_sst_password: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/db_sst_password ' + lab_pw_opts) }}"
+wp_admin_password: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/wp_admin_password ' + lab_pw_opts) }}"
+haproxy_stats_password: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/haproxy_stats_password ' + lab_pw_opts) }}"
+zabbix_db_password: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/zabbix_db_password ' + lab_pw_opts) }}"
+s3_access_key: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/s3_access_key chars=ascii_uppercase,digits length=20') }}"
+s3_secret_key: "{{ lookup('ansible.builtin.password', lab_secrets_dir + '/s3_secret_key chars=ascii_letters,digits length=40') }}"
+
+# --- MariaDB Galera ---------------------------------------------------------
+galera_cluster_name: wp_galera
+galera_bootstrap_node: vps3
+galera_buffer_pool: 256M
+wp_db_name: wordpress
+wp_db_user: wp
+
+# --- Elasticsearch ----------------------------------------------------------
+# Linia wersji z repozytorium Elastic, np. "9.x" albo "8.x"
+es_repo_major: "9.x"
+es_cluster_name: wp-es
+es_heap: 1g
+
+# --- S3 (SeaweedFS zamiast MinIO – MinIO nie wydaje już gotowych binarek) -------
+s3_port: 8333
+s3_bucket: wp-uploads
+seaweedfs_url: https://github.com/seaweedfs/seaweedfs/releases/latest/download/linux_amd64.tar.gz
+
+# --- WordPress i wdrożenia z Git -------------------------------------------
+wp_base: /var/www/wordpress
+wp_locale: pl_PL
+git_repo_path: /srv/git/wordpress-site.git
+git_repo_url: "deploy@vps3:{{ git_repo_path }}"
+wp_cli_url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+
+# --- Zabbix -----------------------------------------------------------------
+zabbix_version: "8.0"

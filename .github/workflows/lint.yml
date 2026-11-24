@@ -1,0 +1,30 @@
+# CI: kontrola jakości skryptów, YAML, PHP i kodu Ansible przy każdym pushu.
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ShellCheck (skrypty Bash)
+        run: shellcheck -x ansible/roles/*/files/*.sh site-template/deploy/*.sh
+
+      - name: yamllint (pliki YAML)
+        run: |
+          pip install --quiet yamllint
+          yamllint -c .yamllint.yml .
+
+      - name: PHP (składnia)
+        run: find . -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: ansible-lint (playbook i role)
+        working-directory: ansible
+        run: |
+          pip install --quiet ansible ansible-lint
+          ansible-playbook -i inventory.ini --syntax-check site.yml
+          ansible-lint site.yml

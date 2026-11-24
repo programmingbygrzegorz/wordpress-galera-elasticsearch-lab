@@ -1,0 +1,3 @@
+# Skrypty i konfiguracje trafiają do maszyn z Linuxem – zawsze końce linii LF (także po klonowaniu na Windowsie)
+* text=auto eol=lf
+*.png binary

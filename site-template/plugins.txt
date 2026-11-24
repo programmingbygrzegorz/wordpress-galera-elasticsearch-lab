@@ -1,0 +1,3 @@
+# Wtyczki z wordpress.org instalowane przy każdym wdrożeniu: "nazwa [wersja]".
+# Bez wersji = najnowsza w chwili pierwszego pobrania (na prawdziwej stronie zawsze przypinaj wersję!).
+elasticpress

@@ -1,0 +1,51 @@
+# {{ ansible_managed }}
+# Ruch przychodzi z load balancera ({{ lb_ip }}) po HTTP; HTTPS kończy się na LB.
+server {
+    listen 80 default_server;
+    server_name {{ wp_domain }} _;
+
+    root {{ wp_base }}/current;
+    index index.php;
+    client_max_body_size 64m;
+
+    # Który węzeł odpowiedział – widać w przeglądarce (F12) i w curl -I
+    add_header X-Served-By $hostname always;
+
+    access_log /var/log/nginx/wordpress.access.log;
+    error_log  /var/log/nginx/wordpress.error.log;
+
+    # Health check dla load balancera (poza kodem WordPressa)
+    location = /healthz {
+        access_log off;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME /var/www/health/healthz.php;
+        fastcgi_pass unix:/run/php/php{{ web_php_version }}-fpm.sock;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        # $realpath_root: PHP dostaje prawdziwą ścieżkę wydania, a nie symlink "current"
+        # (inaczej OPcache po wdrożeniu mógłby serwować stary kod)
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+        fastcgi_pass unix:/run/php/php{{ web_php_version }}-fpm.sock;
+        fastcgi_read_timeout 60s;
+    }
+
+    location ~* \.(css|js|jpg|jpeg|png|gif|svg|webp|ico|woff2?)$ {
+        expires 7d;
+        access_log off;
+        try_files $uri =404;
+    }
+
+    location ~ /\.(?!well-known) {
+        deny all;
+    }
+    location ~ ^/(REVISION|plugins\.txt|deploy/) {
+        deny all;
+    }
+}

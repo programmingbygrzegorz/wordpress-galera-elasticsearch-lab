@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+global
+    log /dev/log local0
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    user haproxy
+    group haproxy
+    daemon
+    ssl-default-bind-options ssl-min-ver TLSv1.2
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    option  forwardfor
+    timeout connect 5s
+    timeout client  60s
+    timeout server  60s
+
+# --- Wejście: HTTP przekierowuje na HTTPS -----------------------------------
+frontend fe_http
+    bind *:80
+    http-request redirect scheme https code 301
+
+frontend fe_https
+    bind *:443 ssl crt /etc/haproxy/certs/site.pem alpn h2,http/1.1
+    http-request set-header X-Forwarded-Proto https
+    default_backend be_wordpress
+
+# --- Węzły WWW ---------------------------------------------------------------
+backend be_wordpress
+    # Ćwiczenie: zmień na leastconn albo włącz sticky sessions (linia "cookie" niżej)
+    balance roundrobin
+    # cookie SRV insert indirect nocache
+
+    # Sprawdzanie zdrowia: /healthz zwraca 200 tylko gdy węzeł Galery jest gotowy
+    option httpchk
+    http-check send meth GET uri /healthz ver HTTP/1.1 hdr Host {{ wp_domain }}
+    http-check expect status 200
+    # inter = co ile sprawdzać, fall = ile porażek do wyłączenia, rise = ile sukcesów do powrotu
+    default-server inter 3s fall 3 rise 2
+
+{% for n in web_nodes %}
+    server {{ n }} {{ lab_net }}.{{ lab_hosts[n] }}:80 check cookie {{ n }}
+{% endfor %}
+
+# --- Panel statystyk -------------------------------------------------------
+listen stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 5s
+    stats admin if TRUE
+    stats auth admin:{{ haproxy_stats_password }}

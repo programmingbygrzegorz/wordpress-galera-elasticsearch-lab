@@ -1,0 +1,95 @@
+# Zabbix na VPS3 (serwer monitoringu). Baza Zabbixa w osobnym PostgreSQL –
+# nie w klastrze Galera, żeby monitoring nie zależał od tego, co monitoruje.
+# Repozytorium Zabbixa dodaje rola zabbix_agent.
+
+- name: Instalacja serwera Zabbix, frontendu i PostgreSQL
+  ansible.builtin.apt:
+    name:
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - zabbix-nginx-conf
+      - zabbix-sql-scripts
+      - php-pgsql
+      - postgresql
+      - nginx
+    state: present
+
+- name: Użytkownik i baza zabbix w PostgreSQL
+  ansible.builtin.shell: |
+    set -eo pipefail
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='zabbix'" | grep -q 1; then
+      sudo -u postgres psql -c "CREATE USER zabbix WITH PASSWORD '{{ zabbix_db_password }}'"
+      echo created-user
+    fi
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='zabbix'" | grep -q 1; then
+      sudo -u postgres createdb -O zabbix zabbix
+      echo created-db
+    fi
+  args:
+    executable: /bin/bash
+  register: zabbix_server_db
+  changed_when: "'created' in zabbix_server_db.stdout"
+  no_log: true
+
+- name: Import schematu bazy (tylko gdy baza jest pusta)
+  ansible.builtin.shell: |
+    set -eo pipefail
+    q="SELECT 1 FROM pg_tables WHERE tablename='users'"
+    if sudo -u zabbix PGPASSWORD="$PGPASSWORD" psql -h 127.0.0.1 -tAc "$q" zabbix | grep -q 1; then
+      echo exists; exit 0
+    fi
+    schema=$(find /usr/share/zabbix* -path '*postgresql*' -name 'server.sql.gz' | head -1)
+    [ -n "$schema" ] || { echo "Nie znalazłem server.sql.gz" >&2; exit 1; }
+    zcat "$schema" | sudo -u zabbix PGPASSWORD="$PGPASSWORD" psql -q -h 127.0.0.1 zabbix >/dev/null
+    echo imported
+  args:
+    executable: /bin/bash
+  environment:
+    PGPASSWORD: "{{ zabbix_db_password }}"
+  register: zabbix_server_schema
+  changed_when: "'imported' in zabbix_server_schema.stdout"
+  no_log: true
+
+- name: Hasło bazy w konfiguracji serwera
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: "^#?\\s*{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - {key: DBHost, value: "127.0.0.1"}
+    - {key: DBPassword, value: "{{ zabbix_db_password }}"}
+  notify: Restart zabbix-server
+  no_log: true
+
+- name: Konfiguracja frontendu (bez kreatora instalacji)
+  ansible.builtin.template:
+    src: zabbix.conf.php.j2
+    dest: /etc/zabbix/web/zabbix.conf.php
+    owner: www-data
+    group: www-data
+    mode: "0600"
+
+- name: Frontend Zabbixa na porcie 80
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/nginx.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {regexp: '^\s*#?\s*listen\s+\d+;', line: "        listen 80;"}
+    - {regexp: '^\s*#?\s*server_name\s+\S+;', line: "        server_name _;"}
+  notify: Reload nginx
+
+- name: Wyłączenie domyślnej strony nginx
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Usługi Zabbixa włączone
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - zabbix-server
+    - nginx

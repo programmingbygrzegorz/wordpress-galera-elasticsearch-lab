@@ -1,0 +1,162 @@
+# Front WWW: nginx + PHP-FPM + WordPress wdrażany z Git (katalogi releases/ + symlink current).
+#   /var/www/wordpress/releases/<data>-<commit>/   kolejne wydania (5 ostatnich)
+#   /var/www/wordpress/current -> releases/...     aktywne wydanie (root w nginx)
+#   /var/www/wordpress/shared/wp-config.php        konfiguracja (kopiowana do każdego wydania)
+#   /var/www/wordpress/shared/uploads              bucket S3 przez s3fs (wspólny dla VPS1 i VPS2)
+
+- name: Instalacja nginx i PHP-FPM
+  ansible.builtin.apt:
+    name:
+      - nginx
+      - php-fpm
+      - php-cli
+      - php-mysql
+      - php-curl
+      - php-gd
+      - php-imagick
+      - php-intl
+      - php-mbstring
+      - php-xml
+      - php-zip
+    state: present
+
+- name: Wersja PHP
+  ansible.builtin.command: php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;'
+  register: web_php_version_cmd
+  changed_when: false
+
+- name: Zapamiętanie wersji PHP
+  ansible.builtin.set_fact:
+    web_php_version: "{{ web_php_version_cmd.stdout }}"
+
+- name: Ustawienia PHP dla WordPressa
+  ansible.builtin.copy:
+    dest: "/etc/php/{{ web_php_version }}/fpm/conf.d/90-lab.ini"
+    content: |
+      memory_limit = 256M
+      upload_max_filesize = 64M
+      post_max_size = 64M
+      max_execution_time = 60
+    mode: "0644"
+  notify: Restart php-fpm
+
+- name: Katalogi WordPressa i pamięć podręczna pobrań
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop:
+    - {path: "{{ wp_base }}/releases"}
+    - {path: "{{ wp_base }}/shared"}
+    - {path: /var/cache/wp-lab}
+    - {path: /var/www/health}
+    - {path: /var/log/wordpress, owner: www-data, group: www-data}
+
+- name: Plik wp-config.php wspólny dla wszystkich wydań
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: "{{ wp_base }}/shared/wp-config.php"
+    owner: root
+    group: www-data
+    mode: "0640"
+
+- name: Hasła dla skryptów (health check, instalacja WordPressa)
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: "0640"
+  loop:
+    - dest: /etc/wp-lab/health.ini
+      group: www-data
+      content: |
+        user = "{{ wp_db_user }}"
+        password = "{{ db_wp_password }}"
+        database = "{{ wp_db_name }}"
+    - dest: /etc/wp-lab/wp-admin.pass
+      group: root
+      content: "{{ wp_admin_password }}\n"
+  no_log: true
+
+- name: Endpoint /healthz dla load balancera
+  ansible.builtin.copy:
+    src: healthz.php
+    dest: /var/www/health/healthz.php
+    mode: "0644"
+
+- name: Strona WordPress w nginx
+  ansible.builtin.template:
+    src: wordpress.nginx.j2
+    dest: /etc/nginx/sites-available/wordpress
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Włączenie strony WordPress
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/wordpress
+    dest: /etc/nginx/sites-enabled/wordpress
+    state: link
+  notify: Reload nginx
+
+- name: Wyłączenie domyślnej strony nginx
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: WP-CLI
+  ansible.builtin.get_url:
+    url: "{{ wp_cli_url }}"
+    dest: /usr/local/bin/wp
+    mode: "0755"
+
+- name: Skrypty wdrożeń (wp-release, wp-rollback, wp-post-deploy)
+  ansible.builtin.copy:
+    src: "{{ item }}.sh"
+    dest: "/usr/local/sbin/{{ item }}"
+    mode: "0755"
+  loop: [wp-release, wp-rollback, wp-post-deploy]
+
+- name: Test po wdrożeniu (wp-smoke-test)
+  ansible.builtin.copy:
+    src: wp-smoke-test.sh
+    dest: /usr/local/bin/wp-smoke-test
+    mode: "0755"
+
+- name: Uprawnienia sudo dla deploy (tylko skrypty wdrożeń)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/deploy
+    content: |
+      deploy ALL=(root) NOPASSWD: /usr/local/sbin/wp-release, /usr/local/sbin/wp-rollback, /usr/local/sbin/wp-post-deploy
+    mode: "0440"
+    validate: visudo -cf %s
+
+- name: Usługi WWW włączone
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - nginx
+    - "php{{ web_php_version }}-fpm"
+
+- name: Zastosowanie zmian w nginx/PHP przed pierwszym wdrożeniem
+  ansible.builtin.meta: flush_handlers
+
+- name: Pierwsze wdrożenie z repozytorium Git (gałąź main)
+  ansible.builtin.command:
+    cmd: /usr/local/sbin/wp-release main
+    creates: "{{ wp_base }}/current"
+
+- name: Instalacja WordPressa i zadania po wdrożeniu (tylko pierwszy węzeł – baza jest wspólna)
+  ansible.builtin.command: /usr/local/sbin/wp-post-deploy
+  when: inventory_hostname == web_nodes[0]
+  register: web_post_deploy
+  changed_when: "'Zainstalowano WordPress' in web_post_deploy.stdout"
+
+- name: Test strony na tym węźle
+  ansible.builtin.command: /usr/local/bin/wp-smoke-test
+  changed_when: false

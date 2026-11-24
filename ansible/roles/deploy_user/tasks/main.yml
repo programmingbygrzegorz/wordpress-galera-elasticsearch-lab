@@ -1,0 +1,47 @@
+# Użytkownik "deploy": przez niego idą wdrożenia z Git (VPS3 <-> VPS1/VPS2 po SSH).
+# Jedna para kluczy dla całego labu, wygenerowana w .lab/ (poza gitem).
+
+- name: Użytkownik deploy
+  ansible.builtin.user:
+    name: deploy
+    shell: /bin/bash
+    groups: www-data
+    append: true
+
+- name: Klucz SSH labu do wdrożeń (generowany raz)
+  ansible.builtin.command:
+    cmd: ssh-keygen -t ed25519 -N "" -C "deploy@wordpress-lab" -f {{ lab_secrets_dir }}/deploy_ed25519
+    creates: "{{ lab_secrets_dir }}/deploy_ed25519"
+
+- name: Katalog .ssh
+  ansible.builtin.file:
+    path: /home/deploy/.ssh
+    state: directory
+    owner: deploy
+    group: deploy
+    mode: "0700"
+
+- name: Klucz prywatny (kopia z poprawnymi uprawnieniami)
+  ansible.builtin.copy:
+    src: "{{ lab_secrets_dir }}/deploy_ed25519"
+    dest: /home/deploy/.ssh/id_ed25519
+    owner: deploy
+    group: deploy
+    mode: "0600"
+    remote_src: true
+
+- name: Klucz publiczny w authorized_keys
+  ansible.posix.authorized_key:
+    user: deploy
+    key: "{{ lookup('ansible.builtin.file', lab_secrets_dir + '/deploy_ed25519.pub') }}"
+
+- name: Ustawienia SSH (akceptacja klucza hosta przy pierwszym połączeniu)
+  ansible.builtin.copy:
+    dest: /home/deploy/.ssh/config
+    content: |
+      Host vps1 vps2 vps3
+        StrictHostKeyChecking accept-new
+        IdentityFile ~/.ssh/id_ed25519
+    owner: deploy
+    group: deploy
+    mode: "0600"

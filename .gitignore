@@ -1,0 +1,4 @@
+.vagrant/
+# Hasła i klucz SSH labu generowane przy pierwszym vagrant up
+.lab/
+*.bak

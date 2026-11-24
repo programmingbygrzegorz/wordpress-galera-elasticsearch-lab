@@ -1,0 +1,51 @@
+# Load balancer przed VPS1 i VPS2 (HTTPS 443).
+# Tu HAProxy: kończy HTTPS, sprawdza /healthz na węzłach i rozkłada ruch.
+
+- name: Instalacja HAProxy
+  ansible.builtin.apt:
+    name:
+      - haproxy
+      - socat
+      - openssl
+    state: present
+
+- name: Katalog na certyfikat
+  ansible.builtin.file:
+    path: /etc/haproxy/certs
+    state: directory
+    mode: "0700"
+
+- name: Certyfikat self-signed dla {{ wp_domain }}
+  ansible.builtin.shell: |
+    set -e
+    cd /etc/haproxy/certs
+    openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+      -subj "/CN={{ wp_domain }}" -addext "subjectAltName=DNS:{{ wp_domain }}" \
+      -keyout site.key -out site.crt
+    cat site.crt site.key > site.pem
+    chmod 600 site.key site.pem
+  args:
+    executable: /bin/bash
+    creates: /etc/haproxy/certs/site.pem
+
+- name: Konfiguracja HAProxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0640"
+    validate: haproxy -c -f %s
+  notify: Reload haproxy
+
+- name: HAProxy włączony
+  ansible.builtin.systemd_service:
+    name: haproxy
+    state: started
+    enabled: true
+
+- name: Adresy labu
+  ansible.builtin.debug:
+    msg:
+      - "Strona:        https://{{ wp_domain }}  (Windows: dopisz '{{ lb_ip }} {{ wp_domain }}' do pliku hosts)"
+      - "Panel WP:      https://{{ wp_domain }}/wp-admin  (admin / hasło w .lab/wp_admin_password)"
+      - "HAProxy stats: http://{{ lb_ip }}:8404/stats  (admin / hasło w .lab/haproxy_stats_password)"
+      - "Zabbix:        http://{{ data_ip }}/  (Admin / zabbix)"

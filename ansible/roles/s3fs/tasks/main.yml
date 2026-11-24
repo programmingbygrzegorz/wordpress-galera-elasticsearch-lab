@@ -1,0 +1,27 @@
+# Wspólny katalog uploads na VPS1 i VPS2: bucket S3 zamontowany przez s3fs.
+
+- name: Instalacja s3fs
+  ansible.builtin.apt:
+    name: s3fs
+    state: present
+
+- name: Klucze do S3
+  ansible.builtin.copy:
+    dest: /etc/passwd-s3fs
+    content: "{{ s3_access_key }}:{{ s3_secret_key }}\n"
+    mode: "0600"
+  no_log: true
+
+- name: Punkt montowania
+  ansible.builtin.file:
+    path: "{{ wp_base }}/shared/uploads"
+    state: directory
+    mode: "0755"
+
+- name: Montowanie bucketu S3 (wpis w /etc/fstab)
+  ansible.posix.mount:
+    src: "{{ s3_bucket }}"
+    path: "{{ wp_base }}/shared/uploads"
+    fstype: fuse.s3fs
+    opts: "{{ s3fs_opts | join(',') }}"
+    state: mounted

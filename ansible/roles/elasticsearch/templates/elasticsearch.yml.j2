@@ -1,0 +1,26 @@
+# {{ ansible_managed }}
+cluster.name: {{ es_cluster_name }}
+node.name: {{ inventory_hostname }}
+
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+
+# Słucha lokalnie (WordPress/ElasticPress) i w sieci labu (pozostałe węzły)
+network.host: ["_local_", "{{ node_ip }}"]
+network.publish_host: {{ node_ip }}
+http.port: 9200
+
+discovery.seed_hosts:
+{% for n in cluster_nodes %}
+  - {{ lab_net }}.{{ lab_hosts[n] }}
+{% endfor %}
+
+# Potrzebne TYLKO przy pierwszym założeniu klastra (ćwiczenie: usuń po starcie i zrozum dlaczego)
+cluster.initial_master_nodes:
+{% for n in cluster_nodes %}
+  - {{ n }}
+{% endfor %}
+
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.ml.enabled: false

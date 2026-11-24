@@ -1,0 +1,3 @@
+# Tych plików nie trzymamy w repozytorium – dokłada je wp-release na serwerze
+/wp-config.php
+/wp-content/uploads/

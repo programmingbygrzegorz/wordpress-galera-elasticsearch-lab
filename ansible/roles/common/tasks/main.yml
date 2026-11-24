@@ -1,0 +1,68 @@
+- name: Folder na hasła i klucz labu (.lab/ w katalogu projektu, poza gitem)
+  ansible.builtin.file:
+    path: "{{ lab_secrets_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Strefa czasowa
+  community.general.timezone:
+    name: "{{ lab_timezone }}"
+
+- name: Pakiety podstawowe
+  ansible.builtin.apt:
+    name:
+      - curl
+      - ca-certificates
+      - git
+      - vim
+      - htop
+      - jq
+      - unzip
+      - rsync
+      - tcpdump
+      - dnsutils
+      - iproute2
+      - lsof
+      - sysstat
+      - bash-completion
+      - acl
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Nazwy maszyn labu w /etc/hosts
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} LAB WORDPRESS-GALERA-ES"
+    block: |
+      {% for name, suffix in lab_hosts.items() %}
+      {{ lab_net }}.{{ suffix }} {{ name }}
+      {% endfor %}
+      {{ lb_ip }} {{ wp_domain }}
+
+- name: Usunięcie wpisu 127.0.1.1 z nazwą maszyny (Galera i ES muszą widzieć adres z sieci labu)
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s'
+    state: absent
+
+- name: Skrypty pomocnicze labu (lab-status, lab-chaos)
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/local/bin/{{ item | regex_replace('\\.sh$', '') }}"
+    mode: "0755"
+  loop:
+    - lab-status.sh
+    - lab-chaos.sh
+
+- name: Katalog konfiguracji labu
+  ansible.builtin.file:
+    path: /etc/wp-lab
+    state: directory
+    mode: "0755"
+
+- name: Wspólna konfiguracja dla skryptów labu
+  ansible.builtin.template:
+    src: lab.env.j2
+    dest: /etc/wp-lab/lab.env
+    mode: "0644"

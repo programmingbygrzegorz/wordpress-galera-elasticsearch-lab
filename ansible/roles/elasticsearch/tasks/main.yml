@@ -1,0 +1,87 @@
+# Klaster Elasticsearch: 3 węzły (vps1, vps2, vps3), każdy może być masterem i trzymać dane.
+# Bez TLS i logowania, żeby uprościć ćwiczenia – zabezpieczenie klastra to osobny temat.
+
+- name: Katalog na klucze repozytoriów
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+- name: Klucz repozytorium Elastic
+  ansible.builtin.get_url:
+    url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+    dest: /etc/apt/keyrings/elasticsearch.asc
+    mode: "0644"
+
+- name: Repozytorium Elastic {{ es_repo_major }}
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/elastic.list
+    content: >
+      deb [signed-by=/etc/apt/keyrings/elasticsearch.asc]
+      https://artifacts.elastic.co/packages/{{ es_repo_major }}/apt stable main
+    mode: "0644"
+  register: elasticsearch_repo
+
+- name: Instalacja Elasticsearch
+  ansible.builtin.apt:
+    name: elasticsearch
+    state: present
+    update_cache: "{{ elasticsearch_repo.changed }}"
+
+- name: Limit map pamięci wymagany przez Elasticsearch
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    sysctl_file: /etc/sysctl.d/90-elasticsearch.conf
+
+- name: Konfiguracja węzła (nadpisuje automatyczną konfigurację bezpieczeństwa z instalatora)
+  ansible.builtin.template:
+    src: elasticsearch.yml.j2
+    dest: /etc/elasticsearch/elasticsearch.yml
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+  notify: Restart elasticsearch
+
+- name: Pamięć JVM
+  ansible.builtin.copy:
+    dest: /etc/elasticsearch/jvm.options.d/heap.options
+    content: |
+      -Xms{{ es_heap }}
+      -Xmx{{ es_heap }}
+    owner: root
+    group: elasticsearch
+    mode: "0660"
+  notify: Restart elasticsearch
+
+- name: Hasła TLS z magazynu kluczy (niepotrzebne bez TLS)
+  ansible.builtin.shell: |
+    set -o pipefail
+    removed=0
+    for key in $(/usr/share/elasticsearch/bin/elasticsearch-keystore list | grep '^xpack.security.*ssl'); do
+      /usr/share/elasticsearch/bin/elasticsearch-keystore remove "$key"; removed=1
+    done
+    echo "removed=$removed"
+  args:
+    executable: /bin/bash
+  register: elasticsearch_keystore
+  changed_when: "'removed=1' in elasticsearch_keystore.stdout"
+  notify: Restart elasticsearch
+
+- name: Elasticsearch włączony
+  ansible.builtin.systemd_service:
+    name: elasticsearch
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Restart po zmianie konfiguracji (przed sprawdzeniem stanu)
+  ansible.builtin.meta: flush_handlers
+
+- name: Węzeł odpowiada na porcie 9200
+  ansible.builtin.uri:
+    url: http://127.0.0.1:9200/
+  register: elasticsearch_node
+  retries: 30
+  delay: 5
+  until: elasticsearch_node.status == 200

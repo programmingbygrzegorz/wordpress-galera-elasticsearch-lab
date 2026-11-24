@@ -1,0 +1,49 @@
+- name: Czy repozytorium Zabbixa jest już dodane
+  ansible.builtin.command: dpkg-query -W -f='${Status}' zabbix-release
+  register: zabbix_agent_repo
+  changed_when: false
+  failed_when: false
+
+- name: Dodanie repozytorium Zabbix {{ zabbix_version }}
+  when: "'install ok installed' not in zabbix_agent_repo.stdout"
+  block:
+    - name: Pobranie pakietu zabbix-release (nazwa pliku różni się między wersjami, próbuję obu)
+      ansible.builtin.shell: |
+        set -e
+        base="https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/debian/pool/main/z/zabbix-release"
+        for f in "zabbix-release_latest+debian{{ ansible_distribution_major_version }}_all.deb" \
+                 "zabbix-release_latest_{{ zabbix_version }}+debian{{ ansible_distribution_major_version }}_all.deb"; do
+          curl -fsSL -o /tmp/zabbix-release.deb "$base/$f" && exit 0
+        done
+        echo "Nie znalazłem pakietu zabbix-release w $base" >&2; exit 1
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Instalacja zabbix-release
+      ansible.builtin.apt:
+        deb: /tmp/zabbix-release.deb
+
+- name: Instalacja Zabbix Agent 2
+  ansible.builtin.apt:
+    name: zabbix-agent2
+    state: present
+    update_cache: true
+
+- name: Konfiguracja agenta (serwer Zabbix na VPS3, autorejestracja z metadanymi)
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_agent2.conf
+    regexp: "^#?\\s*{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - {key: Server, value: "{{ data_ip }}"}
+    - {key: ServerActive, value: "{{ data_ip }}"}
+    - {key: Hostname, value: "{{ inventory_hostname }}"}
+    - {key: HostMetadata, value: "wplab {{ group_names | join(' ') }}"}
+  notify: Restart zabbix-agent2
+
+- name: Agent włączony
+  ansible.builtin.systemd_service:
+    name: zabbix-agent2
+    state: started
+    enabled: true

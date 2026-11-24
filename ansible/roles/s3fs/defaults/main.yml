@@ -1,0 +1,11 @@
+# Opcje montowania s3fs (uid/gid 33 = www-data, żeby WordPress mógł zapisywać pliki)
+s3fs_opts:
+  - _netdev
+  - allow_other
+  - use_path_request_style
+  - "url=http://{{ data_ip }}:{{ s3_port }}"
+  - passwd_file=/etc/passwd-s3fs
+  - uid=33
+  - gid=33
+  - umask=0002
+  - mp_umask=0002
