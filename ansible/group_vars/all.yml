@@ -58,3 +58,5 @@ wp_cli_url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli
 
 # --- Zabbix -----------------------------------------------------------------
 zabbix_version: "8.0"
+# Gdy dla wersji powyżej nie ma jeszcze pakietów na Debiana 13, użyte zostaną kolejne z listy
+zabbix_fallback_versions: ["7.4", "7.0"]

@@ -7,18 +7,29 @@
 - name: Dodanie repozytorium Zabbix {{ zabbix_version }}
   when: "'install ok installed' not in zabbix_agent_repo.stdout"
   block:
-    - name: Pobranie pakietu zabbix-release (nazwa pliku różni się między wersjami, próbuję obu)
+    # Nazwa pliku różni się między wersjami, a nowa wersja Zabbixa może jeszcze nie mieć pakietów
+    # dla Debiana 13 – dlatego próbuję obu nazw i kolejnych wersji z listy
+    - name: Pobranie pakietu zabbix-release
       ansible.builtin.shell: |
         set -e
-        base="https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/debian/pool/main/z/zabbix-release"
-        for f in "zabbix-release_latest+debian{{ ansible_distribution_major_version }}_all.deb" \
-                 "zabbix-release_latest_{{ zabbix_version }}+debian{{ ansible_distribution_major_version }}_all.deb"; do
-          curl -fsSL -o /tmp/zabbix-release.deb "$base/$f" && exit 0
+        deb="debian{{ ansible_distribution_major_version }}"
+        for ver in {{ ([zabbix_version] + zabbix_fallback_versions) | unique | join(' ') }}; do
+          base="https://repo.zabbix.com/zabbix/$ver/release/debian/pool/main/z/zabbix-release"
+          for f in "zabbix-release_latest+${deb}_all.deb" "zabbix-release_latest_${ver}+${deb}_all.deb"; do
+            if curl -fsSL -o /tmp/zabbix-release.deb "$base/$f"; then
+              echo "Zabbix $ver"; exit 0
+            fi
+          done
         done
-        echo "Nie znalazłem pakietu zabbix-release w $base" >&2; exit 1
+        echo "Nie znalazłem pakietu zabbix-release dla $deb" >&2; exit 1
       args:
         executable: /bin/bash
+      register: zabbix_agent_release
       changed_when: true
+
+    - name: Wybrana wersja Zabbixa
+      ansible.builtin.debug:
+        msg: "{{ zabbix_agent_release.stdout }}"
 
     - name: Instalacja zabbix-release
       ansible.builtin.apt:

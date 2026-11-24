@@ -1,14 +1,13 @@
 # Każda maszyna wykonuje tylko „swoje” plays (Vagrant uruchamia playbook z --limit <nazwa>).
 # Kolejność tworzenia maszyn: vps3 -> vps1 -> vps2 -> lb.
 
-- name: Wszystkie maszyny – system bazowy i agent Zabbix
+- name: Wszystkie maszyny – system bazowy
   hosts: all
   become: true
   roles:
     - common
-    - zabbix_agent
 
-- name: VPS3 – węzeł danych (S3, Galera, Elasticsearch, Git, Zabbix)
+- name: VPS3 – węzeł danych (S3, Galera, Elasticsearch, Git)
   hosts: data
   become: true
   roles:
@@ -17,7 +16,6 @@
     - elasticsearch
     - deploy_user
     - gitrepo
-    - zabbix_server
 
 - name: VPS1 i VPS2 – front WWW i węzły klastrów
   hosts: web
@@ -34,3 +32,35 @@
   become: true
   roles:
     - haproxy
+
+# Monitoring na końcu i z obsługą błędu: gdyby instalacja Zabbixa się nie powiodła,
+# reszta labu powstaje dalej (Vagrant przerywa "vagrant up" przy każdym błędzie provisioningu)
+- name: Wszystkie maszyny – agent Zabbix
+  hosts: all
+  become: true
+  tasks:
+    - name: Agent Zabbix
+      block:
+        - name: Instalacja i konfiguracja agenta
+          ansible.builtin.include_role:
+            name: zabbix_agent
+      rescue:
+        - name: Ostrzeżenie – agent Zabbix nie zainstalował się
+          ansible.builtin.debug:
+            msg: >-
+              Agent Zabbix NIE działa, lab działa dalej. Popraw zabbix_version w group_vars/all.yml
+              i zrób: vagrant provision {{ inventory_hostname }}
+
+- name: VPS3 – serwer Zabbix
+  hosts: data
+  become: true
+  tasks:
+    - name: Serwer Zabbix
+      block:
+        - name: Instalacja i konfiguracja serwera
+          ansible.builtin.include_role:
+            name: zabbix_server
+      rescue:
+        - name: Ostrzeżenie – serwer Zabbix nie zainstalował się
+          ansible.builtin.debug:
+            msg: "Serwer Zabbix NIE działa. Lab działa dalej. Wklej błąd powyżej, a po poprawce: vagrant provision vps3"
